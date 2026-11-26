@@ -16,8 +16,11 @@ import (
 	"github.com/2E0LXY/DroidCommand/internal/mcp"
 )
 
+// version is overridden at build time: -ldflags "-X main.version=X.Y.Z".
+var version = "dev"
+
 const usage = `usage: droidcommand [-config FILE] [-serial S] [-yes] <command> [args]
-commands: doctor | serve (stdio MCP; add -allow-text to enable text entry) | devices | screenshot OUT.png | ui | tap X Y | swipe X1 Y1 X2 Y2 MS | text STRING | start-app PKG
+commands: version | doctor | serve (stdio MCP; add -allow-text to enable text entry) | devices | screenshot OUT.png | ui | tap X Y | swipe X1 Y1 X2 Y2 MS | text STRING | start-app PKG
 config (JSON): {"serials":[...],"packages":[...],"audit_log":"audit.jsonl"}; empty lists deny everything.`
 
 func main() {
@@ -30,6 +33,10 @@ func main() {
 	if len(a) == 0 {
 		fmt.Fprintln(os.Stderr, usage)
 		os.Exit(2)
+	}
+	if a[0] == "version" {
+		fmt.Println("droidcommand", version)
+		return
 	}
 	if a[0] == "doctor" {
 		p, err := exec.LookPath("adb")
@@ -66,7 +73,7 @@ func main() {
 	case "serve":
 		ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
-		srv := &mcp.Server{C: c, AllowText: *allowText, Version: "0.1.0"}
+		srv := &mcp.Server{C: c, AllowText: *allowText, Version: version}
 		done := make(chan error, 1)
 		go func() { done <- srv.Serve(ctx, os.Stdin, os.Stdout) }()
 		select {
