@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -42,26 +43,53 @@ func (c *Client) Devices(ctx context.Context) ([]string, error) {
 	return res, nil
 }
 
-func (c *Client) locked(ctx context.Context, serial string) (bool, error) {
+var (
+	// ErrUnknownState is returned when lock or foreground state cannot be established.
+	ErrUnknownState = errors.New("cannot determine lock or foreground state; refusing")
+	// ErrForeground is returned when the focused app is not an allowlisted package.
+	ErrForeground = errors.New("foreground app is not an allowlisted package")
+
+	focusRe = regexp.MustCompile(`mCurrentFocus=Window\{[^ ]+ u\d+ ([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)/`)
+)
+
+// state reads lock state and focused package from one dumpsys call.
+// It fails closed: missing markers yield ErrUnknownState.
+func (c *Client) state(ctx context.Context, serial string) (locked bool, pkg string, err error) {
 	out, err := c.shell(ctx, serial, "dumpsys", "window")
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	s := string(out)
-	return strings.Contains(s, "mDreamingLockscreen=true") || strings.Contains(s, "isStatusBarKeyguard=true"), nil
+	if !strings.Contains(s, "mDreamingLockscreen=") && !strings.Contains(s, "isStatusBarKeyguard=") {
+		return false, "", ErrUnknownState
+	}
+	locked = strings.Contains(s, "mDreamingLockscreen=true") || strings.Contains(s, "isStatusBarKeyguard=true")
+	if m := focusRe.FindStringSubmatch(s); m != nil {
+		pkg = m[1]
+	}
+	return locked, pkg, nil
 }
 
 // gate runs the common checks for any device-affecting operation.
-func (c *Client) gate(ctx context.Context, serial string) error {
+// With needForeground, the focused app must also be an allowlisted package.
+func (c *Client) gate(ctx context.Context, serial string, needForeground bool) error {
 	if err := c.dev(serial); err != nil {
 		return err
 	}
-	l, err := c.locked(ctx, serial)
+	locked, pkg, err := c.state(ctx, serial)
 	if err != nil {
 		return err
 	}
-	if l {
+	if locked {
 		return ErrLocked
+	}
+	if needForeground {
+		if pkg == "" {
+			return ErrUnknownState
+		}
+		if c.Cfg.CheckPackage(pkg) != nil {
+			return ErrForeground
+		}
 	}
 	return nil
 }
@@ -72,7 +100,7 @@ func (c *Client) done(op, serial, target string, err error) error {
 }
 
 func (c *Client) Screenshot(ctx context.Context, serial string) ([]byte, error) {
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, true); err != nil {
 		return nil, c.done("screenshot", serial, "", err)
 	}
 	b, err := c.R.Run(ctx, "-s", serial, "exec-out", "screencap", "-p")
@@ -80,7 +108,7 @@ func (c *Client) Screenshot(ctx context.Context, serial string) ([]byte, error) 
 }
 
 func (c *Client) UIDump(ctx context.Context, serial string) ([]byte, error) {
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, true); err != nil {
 		return nil, c.done("ui", serial, "", err)
 	}
 	b, err := c.R.Run(ctx, "-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty")
@@ -91,7 +119,7 @@ func (c *Client) Tap(ctx context.Context, serial string, x, y int) error {
 	if x < 0 || y < 0 || x > 10000 || y > 10000 {
 		return errors.New("coordinates out of range")
 	}
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, true); err != nil {
 		return c.done("tap", serial, "", err)
 	}
 	_, err := c.shell(ctx, serial, "input", "tap", strconv.Itoa(x), strconv.Itoa(y))
@@ -107,7 +135,7 @@ func (c *Client) Swipe(ctx context.Context, serial string, x1, y1, x2, y2, ms in
 	if ms < 50 || ms > 5000 {
 		return errors.New("duration out of range")
 	}
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, true); err != nil {
 		return c.done("swipe", serial, "", err)
 	}
 	_, err := c.shell(ctx, serial, "input", "swipe", strconv.Itoa(x1), strconv.Itoa(y1), strconv.Itoa(x2), strconv.Itoa(y2), strconv.Itoa(ms))
@@ -122,11 +150,14 @@ func (c *Client) Text(ctx context.Context, serial, text string, approved bool) e
 	if err := guard.CheckText(text); err != nil {
 		return c.done("text", serial, "", err)
 	}
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, true); err != nil {
 		return c.done("text", serial, "", err)
 	}
-	_, err := c.shell(ctx, serial, "input", "text", strings.ReplaceAll(text, " ", "%s"))
-	return c.done("text", serial, fmt.Sprintf("%d chars", len(text)), err)
+	if _, err := c.shell(ctx, serial, "input", "text", strings.ReplaceAll(text, " ", "%s")); err != nil {
+		// adb errors embed their arguments; never let the payload reach logs or callers.
+		return c.done("text", serial, fmt.Sprintf("%d chars", len(text)), errors.New("input text failed"))
+	}
+	return c.done("text", serial, fmt.Sprintf("%d chars", len(text)), nil)
 }
 
 // StartApp launches an allowlisted package via its launcher intent.
@@ -134,7 +165,7 @@ func (c *Client) StartApp(ctx context.Context, serial, pkg string) error {
 	if err := c.Cfg.CheckPackage(pkg); err != nil {
 		return c.done("start-app", serial, pkg, err)
 	}
-	if err := c.gate(ctx, serial); err != nil {
+	if err := c.gate(ctx, serial, false); err != nil {
 		return c.done("start-app", serial, pkg, err)
 	}
 	_, err := c.shell(ctx, serial, "monkey", "-p", pkg, "-c", "android.intent.category.LAUNCHER", "1")

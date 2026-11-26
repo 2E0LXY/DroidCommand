@@ -3,3 +3,7 @@
 /droidcommand.json
 audit.jsonl
 *.png
+testapp/.gradle/
+testapp/build/
+testapp/app/build/
+testapp/local.properties
