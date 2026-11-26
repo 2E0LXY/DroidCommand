@@ -7,3 +7,4 @@ testapp/.gradle/
 testapp/build/
 testapp/app/build/
 testapp/local.properties
+testapp/.kotlin/

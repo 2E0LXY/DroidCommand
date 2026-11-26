@@ -1,10 +1,9 @@
 name: Release
-# Publishes when VERSION changes on main (or on manual dispatch) and the tag
-# does not exist yet. Tags are created by this workflow, never pushed by hand.
+# Manual only: run "Release" from the Actions tab on main. Publishes the version
+# in VERSION if its tag does not exist. Tags are created by the release itself,
+# never pushed by hand. test and apk also run on other refs as a dry run;
+# the release job refuses anything but main.
 on:
-  push:
-    branches: [main]
-    paths: [VERSION]
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,6 +40,7 @@ jobs:
           path: testapp/app/build/outputs/apk/debug/app-debug.apk
   release:
     needs: [test, apk]
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -58,13 +58,28 @@ jobs:
         run: |
           V="$(tr -d '[:space:]' < VERSION)"
           echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "bad VERSION: $V"; exit 1; }
-          if gh release view "v$V" >/dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null 2>&1; then
-            echo "v$V already exists; nothing to publish"
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
+          # Any failure to query GitHub fails the job; only a definite "absent" proceeds.
+          STATE="$(gh release list --limit 200 --json tagName,isDraft -q ".[] | select(.tagName==\"v$V\") | .isDraft")"
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null
+          RC=$?
+          set -e
+          case "$RC" in
+            0) TAG=yes ;;
+            2) TAG=no ;;
+            *) echo "cannot query tags (exit $RC)"; exit 1 ;;
+          esac
+          if [ "$STATE" = "false" ] || { [ "$TAG" = yes ] && [ "$STATE" != "true" ]; }; then
+            echo "v$V already published or tagged; nothing to do"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$STATE" = "true" ]; then
+            echo "removing incomplete draft v$V from an earlier run"
+            gh release delete "v$V" --yes
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Build and package
@@ -89,6 +104,9 @@ jobs:
           V='${{ steps.v.outputs.version }}'
           FLAGS=""
           case "$V" in 0.*) FLAGS="--prerelease" ;; esac
-          gh release create "v$V" dist/* --target "$GITHUB_SHA" --title "DroidCommand v$V" --notes-file notes.md $FLAGS
+          # Draft first so a half-uploaded release is never public; publish after all assets are attached.
+          gh release create "v$V" dist/* --draft --target "$GITHUB_SHA" --title "DroidCommand v$V" --notes-file notes.md $FLAGS
+          gh release view "v$V" --json assets -q '.assets | length' | grep -qx "$(ls dist | wc -l)"
+          gh release edit "v$V" --draft=false
         env:
           GH_TOKEN: ${{ github.token }}
