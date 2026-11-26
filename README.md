@@ -19,7 +19,7 @@ Emulators are useful, but real hardware can reveal device-specific layout, compa
 | Screenshots and UI hierarchy | Implemented on bootstrap branch |
 | Taps, swipes and app launch | Implemented on bootstrap branch |
 | Local stdio MCP server | Implemented on bootstrap branch |
-| Disposable Kotlin/Compose test app | Source implemented; APK build pending verification |
+| Disposable Kotlin/Compose test app | Local APK build reported successful; CI and hardware validation pending |
 | Windows, Linux and macOS releases | Planned |
 | Regression testing and reports | Planned |
 | iOS support | Future investigation |
@@ -51,7 +51,7 @@ DroidCommand is currently being developed. The intended environment is a compute
 
 ## Security and privacy
 
-DroidCommand is intended for authorised application testing, not unrestricted device control. The design uses explicit device and application allowlists, rejects locked or unknown device states, excludes personal applications and credential entry, and does not expose a raw shell or public ADB listener. Test artefacts should remain local and be handled with appropriate redaction. No mandatory cloud service or telemetry is planned.
+DroidCommand is intended for authorised application testing, not unrestricted device control. The design uses explicit device and application allowlists, rejects locked or unknown device states, restricts access to allowlisted applications; credential entry is prohibited by operating policy, not automatically detected, and does not expose a raw shell or public ADB listener. Test artefacts should remain local and be handled with appropriate redaction. No mandatory cloud service or telemetry is planned.
 
 ## Roadmap
 
