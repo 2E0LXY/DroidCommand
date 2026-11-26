@@ -4,7 +4,7 @@
 
 DroidCommand is an independent Android application-testing toolkit designed to connect AI development agents to authorised physical test devices through the Model Context Protocol (MCP).
 
-> **Development preview:** the initial implementation is under review in [PR #1](https://github.com/2E0LXY/DroidCommand/pull/1). No verified APK, production binary or physical-device test result is available yet.
+> **Development preview:** the initial implementation is under review in [PR #1](https://github.com/2E0LXY/DroidCommand/pull/1). Go CI and the debug APK build have passed. No production release or physical-device test result is available yet.
 
 ## Why DroidCommand?
 
@@ -19,7 +19,7 @@ Emulators are useful, but real hardware can reveal device-specific layout, compa
 | Screenshots and UI hierarchy | Implemented on bootstrap branch |
 | Taps, swipes and app launch | Implemented on bootstrap branch |
 | Local stdio MCP server | Implemented on bootstrap branch |
-| Disposable Kotlin/Compose test app | Local APK build reported successful; CI and hardware validation pending |
+| Disposable Kotlin/Compose test app | GitHub APK build passed; hardware validation pending |
 | Windows, Linux and macOS releases | Planned |
 | Regression testing and reports | Planned |
 | iOS support | Future investigation |
@@ -50,6 +50,8 @@ DroidCommand is currently being developed. The intended environment is a compute
 - [Releases](https://github.com/2E0LXY/DroidCommand/releases)
 
 ## Security and privacy
+
+**Dedicated disposable test devices only.** Foreground and lock checks are guards, not an isolation boundary. Device state can change between checks and operations. Do not use a personal phone, real credentials or sensitive data. Captured content may be transmitted to the configured MCP client; local transport does not guarantee that the client processes it locally.
 
 DroidCommand is intended for authorised application testing, not unrestricted device control. The design uses explicit device and application allowlists, rejects locked or unknown device states, restricts access to allowlisted applications; credential entry is prohibited by operating policy, not automatically detected, and does not expose a raw shell or public ADB listener. Test artefacts should remain local and be handled with appropriate redaction. No mandatory cloud service or telemetry is planned.
 
