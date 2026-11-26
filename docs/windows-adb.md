@@ -1,10 +1,10 @@
 # Windows Android test-host onboarding
 
-Status: proposed; hardware validation pending. DroidCommand uses Go and Android SDK Platform-Tools, not Python or Phone Harness at runtime.
+Status: v0.1.0 experimental prerelease; hardware validation pending. DroidCommand uses Go and Android SDK Platform-Tools, not Python or Phone Harness at runtime.
 
 ## Host and device prerequisites
 
-Use a dedicated Android test handset or emulator with no personal accounts or sensitive data. Obtain the owner's permission before connecting a device. Install current Android SDK Platform-Tools from https://developer.android.com/tools/releases/platform-tools and add its extracted directory to the current user's PATH. Verify in PowerShell with `adb version`. For source builds, install the Go version specified by the project's eventual go.mod. Android APK builds use the project's Gradle wrapper and CI.
+Use a dedicated Android test handset or emulator with no personal accounts or sensitive data. Obtain the owner's permission before connecting a device. Install current Android SDK Platform-Tools from https://developer.android.com/tools/releases/platform-tools and add its extracted directory to the current user's PATH. Verify in PowerShell with `adb version`. For source builds, install the Go version specified by the project's go.mod. Android APK builds use Gradle 8.10.2 and CI.
 
 ## Connection and verification
 
@@ -14,7 +14,7 @@ Wireless debugging is optional on supported Android versions: use Android's buil
 
 ## DroidCommand configuration
 
-The final configuration syntax will be documented after the Go implementation is reviewed. Require an explicit device serial and the disposable test application's package identifier; do not auto-select a handset. Keep configuration and artifacts outside the public repository. MCP transport is local stdio only. No raw shell tool, no cloud accounts, no telemetry.
+See [INSTALL.md](INSTALL.md) and [MCP.md](MCP.md) for the released configuration and setup. Require an explicit device serial and the disposable test application's package identifier; do not auto-select a handset. Keep configuration and artifacts outside the public repository. MCP transport is local stdio only. No raw shell tool or mandatory cloud service. The configured MCP client may process returned data remotely.
 
 ## Acceptance and teardown
 
