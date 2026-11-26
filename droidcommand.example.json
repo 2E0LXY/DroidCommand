@@ -1,0 +1,5 @@
+{
+  "serials": ["REPLACE_WITH_ADB_SERIAL"],
+  "packages": ["uk.co.droidcommand.testapp"],
+  "audit_log": "audit.jsonl"
+}

@@ -1,0 +1,112 @@
+name: Release
+# Manual only: run "Release" from the Actions tab on main. Publishes the version
+# in VERSION if its tag does not exist. Tags are created by the release itself,
+# never pushed by hand. test and apk also run on other refs as a dry run;
+# the release job refuses anything but main.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - run: gradle --no-daemon assembleDebug
+        working-directory: testapp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: testapp-apk
+          path: testapp/app/build/outputs/apk/debug/app-debug.apk
+  release:
+    needs: [test, apk]
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v4
+        with:
+          name: testapp-apk
+          path: apk
+      - name: Check version and tag
+        id: v
+        run: |
+          V="$(tr -d '[:space:]' < VERSION)"
+          echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "bad VERSION: $V"; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          # Any failure to query GitHub fails the job; only a definite "absent" proceeds.
+          STATE="$(gh release list --limit 200 --json tagName,isDraft -q ".[] | select(.tagName==\"v$V\") | .isDraft")"
+          set +e
+          git ls-remote --exit-code --tags origin "refs/tags/v$V" >/dev/null
+          RC=$?
+          set -e
+          case "$RC" in
+            0) TAG=yes ;;
+            2) TAG=no ;;
+            *) echo "cannot query tags (exit $RC)"; exit 1 ;;
+          esac
+          if [ "$STATE" = "false" ] || { [ "$TAG" = yes ] && [ "$STATE" != "true" ]; }; then
+            echo "v$V already published or tagged; nothing to do"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ "$STATE" = "true" ]; then
+            echo "removing incomplete draft v$V from an earlier run"
+            gh release delete "v$V" --yes
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Build and package
+        if: steps.v.outputs.publish == 'true'
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          mkdir dist
+          build() { GOOS=$1 GOARCH=$2 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=$V" -o "dist/$3" ./cmd/droidcommand; }
+          build linux amd64 droidcommand-linux-amd64
+          build linux arm64 droidcommand-linux-arm64
+          build windows amd64 droidcommand-windows-amd64.exe
+          cp apk/app-debug.apk dist/droidcommand-testapp-debug.apk
+          cp droidcommand.example.json docs/INSTALL.md docs/MCP.md CHANGELOG.md dist/
+          ./dist/droidcommand-linux-amd64 version | grep -q "$V"
+          (cd dist && sha256sum * > SHA256SUMS && cat SHA256SUMS)
+          awk -v v="$V" 'index($0, "## [" v "]") == 1 {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md
+          printf '\nChecksums are in SHA256SUMS. Unit-tested with a fake adb only; not verified on physical devices. The APK is debug-signed.\n' >> notes.md
+      - name: Publish
+        if: steps.v.outputs.publish == 'true'
+        run: |
+          V='${{ steps.v.outputs.version }}'
+          FLAGS=""
+          case "$V" in 0.*) FLAGS="--prerelease" ;; esac
+          # Draft first so a half-uploaded release is never public; publish after all assets are attached.
+          gh release create "v$V" dist/* --draft --target "$GITHUB_SHA" --title "DroidCommand v$V" --notes-file notes.md $FLAGS
+          gh release view "v$V" --json assets -q '.assets | length' | grep -qx "$(ls dist | wc -l)"
+          gh release edit "v$V" --draft=false
+        env:
+          GH_TOKEN: ${{ github.token }}
