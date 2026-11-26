@@ -36,7 +36,12 @@ All tools except `devices` and `start_app` require an unlocked device with an al
 ## Errors
 Tool failures return `isError: true` with JSON `{"error": code, "message": ...}`. Codes: `serial_denied`, `package_denied`, `device_locked`, `foreground_denied`, `unknown_state`, `invalid_input`, `invalid_text`, `tool_disabled`, `unknown_tool`, `timeout`, `cancelled`, `adb_failed`.
 
+## Argument handling
+`arguments` must be a JSON object containing only documented fields with documented types. Unknown fields, `null`, arrays, scalars and fractional numbers are rejected with `invalid_input`. Unknown tools return `unknown_tool` regardless of arguments.
+
 ## Security notes
+- The foreground check is not isolation: the screen can change between the check and an input action. Use a dedicated test device only (see INSTALL.md, Residual risk).
+- `adb_failed` messages are generic; details are in the audit log, not in tool responses.
 - Approval for typing is the owner's `-allow-text` launch flag, never a model argument.
 - Do not use `text` for credentials. Do not allowlist personal or banking apps.
 - Requests run one at a time; each adb call has a 30 s timeout.

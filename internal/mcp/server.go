@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -196,10 +197,21 @@ func classify(err error) toolResult {
 	case errors.Is(err, context.Canceled):
 		return errResult("cancelled", "operation cancelled")
 	}
-	return errResult("adb_failed", err.Error())
+	// Never forward raw adb errors: they embed arguments and device stderr. Detail stays in the audit log.
+	return errResult("adb_failed", "adb command failed; see the audit log")
 }
 
 func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) toolResult {
+	// Resolve the tool before looking at arguments so unknown tools are reported as such.
+	switch name {
+	case "devices", "screenshot", "ui_dump", "tap", "swipe", "start_app":
+	case "text":
+		if !s.AllowText {
+			return errResult("tool_disabled", "text entry was not enabled by the owner at launch")
+		}
+	default:
+		return errResult("unknown_tool", fmt.Sprintf("no such tool %q", name))
+	}
 	var a struct {
 		Serial     string `json:"serial"`
 		Package    string `json:"package"`
@@ -213,8 +225,14 @@ func (s *Server) call(ctx context.Context, name string, raw json.RawMessage) too
 		DurationMS *int   `json:"duration_ms"`
 	}
 	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &a); err != nil {
-			return errResult("invalid_input", "arguments must be a JSON object of the documented types")
+		// Strict: a JSON object only (not null, array or scalar), known fields only, documented types only.
+		if t := bytes.TrimSpace(raw); len(t) == 0 || t[0] != '{' {
+			return errResult("invalid_input", "arguments must be a JSON object")
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&a); err != nil {
+			return errResult("invalid_input", "arguments contain unknown fields or wrong types")
 		}
 	}
 	need := func(v ...*int) bool {

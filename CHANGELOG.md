@@ -14,8 +14,10 @@ First development preview. Not tested on physical hardware.
 - GitHub Actions: Go checks, Android build, release workflow with SHA-256 checksums.
 
 ### Security
-- Lock and foreground state fail closed. Typed text never reaches the audit log or error messages.
+- Lock and foreground state fail closed: missing, non-boolean or conflicting markers are refused. Screenshots and UI dumps are re-checked after capture and discarded if state changed.
+- MCP arguments are strict (unknown fields, null and non-objects rejected); adb errors are sanitised in tool responses. Typed text never reaches the audit log or error messages.
 
 ### Known limitations
+- The foreground check is a guard, not isolation; the screen can change between check and action. Dedicated test devices only.
 - Device-state detection (`dumpsys window`) is unverified on real devices; failure mode is refusal.
 - Windows and Linux binaries only; no macOS build.

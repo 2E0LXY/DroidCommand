@@ -19,6 +19,8 @@ type fake struct {
 	focus   string // package in focus; "" = none reported
 	noState bool   // dumpsys output lacks lock markers
 	failIn  bool   // `input` commands fail with an error embedding their args
+	// switchTo, if set, becomes the focused package once a capture command has run.
+	switchTo string
 }
 
 func (f *fake) Run(_ context.Context, args ...string) ([]byte, error) {
@@ -36,6 +38,9 @@ func (f *fake) Run(_ context.Context, args ...string) ([]byte, error) {
 			out += fmt.Sprintf("mCurrentFocus=Window{1a2b u0 %s/%s.MainActivity}\n", f.focus, f.focus)
 		}
 		return []byte(out), nil
+	case f.switchTo != "" && (strings.Contains(j, "screencap") || strings.Contains(j, "uiautomator")):
+		f.focus = f.switchTo
+		return []byte("captured"), nil
 	case f.failIn && strings.Contains(j, " input "):
 		return nil, fmt.Errorf("adb %v: exit status 1", args)
 	}
@@ -193,4 +198,69 @@ func TestRangeChecks(t *testing.T) {
 	if c.Tap(ctx, "ABC123", -1, 5) == nil || c.Swipe(ctx, "ABC123", 1, 1, 2, 2, 10) == nil {
 		t.Fatal("expected range errors")
 	}
+}
+
+func TestParseStateFailsClosed(t *testing.T) {
+	foc := "mCurrentFocus=Window{1 u0 " + testPkg + "/" + testPkg + ".Main}\n"
+	cases := []struct {
+		name, in    string
+		locked      bool
+		pkg         string
+		wantUnknown bool
+	}{
+		{"unlocked", "mDreamingLockscreen=false\n" + foc, false, testPkg, false},
+		{"locked", "mDreamingLockscreen=true\n" + foc, true, testPkg, false},
+		{"either marker true locks", "mDreamingLockscreen=false isStatusBarKeyguard=true\n" + foc, true, testPkg, false},
+		{"no markers", "nothing here\n" + foc, false, "", true},
+		{"empty", "", false, "", true},
+		{"non-boolean value", "mDreamingLockscreen=maybe\n" + foc, false, "", true},
+		{"empty value", "mDreamingLockscreen=\n" + foc, false, "", true},
+		{"one bad among good", "mDreamingLockscreen=false isStatusBarKeyguard=null\n" + foc, false, "", true},
+		{"conflicting focus", "mDreamingLockscreen=false\n" + foc + "mCurrentFocus=Window{2 u0 com.other.app/com.other.app.A}\n", false, "", true},
+		{"repeated identical focus ok", "mDreamingLockscreen=false\n" + foc + foc, false, testPkg, false},
+	}
+	for _, c := range cases {
+		l, p, err := parseState(c.in)
+		if c.wantUnknown {
+			if !errors.Is(err, ErrUnknownState) {
+				t.Errorf("%s: want ErrUnknownState, got %v", c.name, err)
+			}
+			continue
+		}
+		if err != nil || l != c.locked || p != c.pkg {
+			t.Errorf("%s: got locked=%v pkg=%q err=%v", c.name, l, p, err)
+		}
+	}
+}
+
+func TestCaptureDiscardedIfForegroundChangesDuringCapture(t *testing.T) {
+	f := &fake{switchTo: "com.personal.messenger"}
+	c := newClient(f)
+	if b, err := c.Screenshot(ctx, "ABC123"); !errors.Is(err, ErrForeground) || b != nil {
+		t.Fatalf("screenshot: data=%v err=%v", b, err)
+	}
+	f2 := &fake{switchTo: "com.personal.messenger"}
+	if b, err := newClient(f2).UIDump(ctx, "ABC123"); !errors.Is(err, ErrForeground) || b != nil {
+		t.Fatalf("ui: data=%v err=%v", b, err)
+	}
+}
+
+func TestCaptureDiscardedIfLockedDuringCapture(t *testing.T) {
+	f := &fake{}
+	c := newClient(f)
+	// Locks right after the capture command: second gate must refuse.
+	c.R = lockAfterCapture{f}
+	if b, err := c.Screenshot(ctx, "ABC123"); !errors.Is(err, ErrLocked) || b != nil {
+		t.Fatalf("data=%v err=%v", b, err)
+	}
+}
+
+type lockAfterCapture struct{ f *fake }
+
+func (l lockAfterCapture) Run(ctx context.Context, args ...string) ([]byte, error) {
+	j := strings.Join(args, " ")
+	if strings.Contains(j, "screencap") {
+		l.f.locked = true
+	}
+	return l.f.Run(ctx, args...)
 }

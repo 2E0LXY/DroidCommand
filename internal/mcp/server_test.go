@@ -227,3 +227,33 @@ func TestSequentialRequestsKeepOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestStrictArguments(t *testing.T) {
+	f := &fakeADB{}
+	r := run(t, f, false,
+		call(1, "tap", `{"serial":"ABC123","x":1,"y":1,"extra":true}`),
+		call(2, "tap", `null`),
+		call(3, "tap", `[1,2]`),
+		call(4, "tap", `"x"`),
+		call(5, "tap", `{"serial":"ABC123","x":1.5,"y":1}`),
+		call(6, "devices", `{"serial":"ABC123","bogus":1}`))
+	for i, m := range r {
+		if errCode(t, m) != "invalid_input" {
+			t.Errorf("req %d: want invalid_input, got %s", i+1, firstText(m))
+		}
+	}
+	if f.inputs != 0 {
+		t.Fatal("no input may reach adb for malformed arguments")
+	}
+}
+
+func TestAdbErrorsAreSanitised(t *testing.T) {
+	f := &fakeADB{err: fmt.Errorf("adb [-s ABC123 shell input tap 1 2]: exit status 1: device stderr secret")}
+	r := run(t, f, false, call(1, "tap", `{"serial":"ABC123","x":1,"y":2}`))
+	if errCode(t, r[0]) != "adb_failed" {
+		t.Fatal("expected adb_failed")
+	}
+	if txt := firstText(r[0]); strings.Contains(txt, "secret") || strings.Contains(txt, "ABC123") || strings.Contains(txt, "shell") {
+		t.Fatalf("raw adb error leaked: %s", txt)
+	}
+}

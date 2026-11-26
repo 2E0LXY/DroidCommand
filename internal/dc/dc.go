@@ -50,24 +50,42 @@ var (
 	ErrForeground = errors.New("foreground app is not an allowlisted package")
 
 	focusRe = regexp.MustCompile(`mCurrentFocus=Window\{[^ ]+ u\d+ ([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+)/`)
+	lockRe  = regexp.MustCompile(`(?:mDreamingLockscreen|isStatusBarKeyguard)=([A-Za-z0-9_]*)`)
 )
 
+// parseState extracts lock state and focused package from `dumpsys window`.
+// It fails closed: no lock marker, a non-boolean marker value or conflicting
+// focus lines yield ErrUnknownState; any marker reporting true means locked.
+func parseState(s string) (locked bool, pkg string, err error) {
+	marks := lockRe.FindAllStringSubmatch(s, -1)
+	if len(marks) == 0 {
+		return false, "", ErrUnknownState
+	}
+	for _, m := range marks {
+		switch m[1] {
+		case "true":
+			locked = true
+		case "false":
+		default:
+			return false, "", ErrUnknownState
+		}
+	}
+	for _, m := range focusRe.FindAllStringSubmatch(s, -1) {
+		if pkg != "" && pkg != m[1] {
+			return false, "", ErrUnknownState
+		}
+		pkg = m[1]
+	}
+	return locked, pkg, nil
+}
+
 // state reads lock state and focused package from one dumpsys call.
-// It fails closed: missing markers yield ErrUnknownState.
 func (c *Client) state(ctx context.Context, serial string) (locked bool, pkg string, err error) {
 	out, err := c.shell(ctx, serial, "dumpsys", "window")
 	if err != nil {
 		return false, "", err
 	}
-	s := string(out)
-	if !strings.Contains(s, "mDreamingLockscreen=") && !strings.Contains(s, "isStatusBarKeyguard=") {
-		return false, "", ErrUnknownState
-	}
-	locked = strings.Contains(s, "mDreamingLockscreen=true") || strings.Contains(s, "isStatusBarKeyguard=true")
-	if m := focusRe.FindStringSubmatch(s); m != nil {
-		pkg = m[1]
-	}
-	return locked, pkg, nil
+	return parseState(string(out))
 }
 
 // gate runs the common checks for any device-affecting operation.
@@ -104,6 +122,12 @@ func (c *Client) Screenshot(ctx context.Context, serial string) ([]byte, error) 
 		return nil, c.done("screenshot", serial, "", err)
 	}
 	b, err := c.R.Run(ctx, "-s", serial, "exec-out", "screencap", "-p")
+	if err == nil {
+		// The screen may have changed during capture: discard the data unless the gate still holds.
+		if gerr := c.gate(ctx, serial, true); gerr != nil {
+			return nil, c.done("screenshot", serial, "", gerr)
+		}
+	}
 	return b, c.done("screenshot", serial, "", err)
 }
 
@@ -112,6 +136,11 @@ func (c *Client) UIDump(ctx context.Context, serial string) ([]byte, error) {
 		return nil, c.done("ui", serial, "", err)
 	}
 	b, err := c.R.Run(ctx, "-s", serial, "exec-out", "uiautomator", "dump", "/dev/tty")
+	if err == nil {
+		if gerr := c.gate(ctx, serial, true); gerr != nil {
+			return nil, c.done("ui", serial, "", gerr)
+		}
+	}
 	return b, c.done("ui", serial, "", err)
 }
 

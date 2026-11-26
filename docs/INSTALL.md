@@ -38,5 +38,8 @@ droidcommand -serial <serial> screenshot shot.png
 ```
 The device must be unlocked by you. DroidCommand refuses on a locked screen, when lock state cannot be read, or when the foreground app is not allowlisted. Screenshots and UI dumps may contain sensitive data: keep them local.
 
+## Residual risk
+The foreground-app check is a guard, not isolation. Input and capture act on the whole screen, and the screen can change between the check and the action (a notification, an incoming call, an app switch). Screenshots and UI dumps are re-checked after capture and discarded if the state changed, but taps, swipes and text cannot be undone. Use a dedicated, disposable test device with no personal accounts or data. Do not use a personal phone.
+
 ## Verification status
 Unit tests use a fake adb. Nothing has been verified on physical hardware yet.
